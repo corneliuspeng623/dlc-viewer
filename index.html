@@ -1,0 +1,675 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DLC 逐幀檢視器 · NYCU Neuromodulation Lab</title>
+<meta name="author" content="Cornelius Peng">
+<style>
+:root{--bg:#111418;--panel:#1a1f26;--line:#2b323c;--text:#e6e9ee;--muted:#8b95a3;--accent:#4aa3ff;--bad:#ff5d5d;--ok:#3ecf8e;--warn:#ffcc4d}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.4 -apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif}
+body{display:grid;grid-template-rows:auto 1fr auto;height:100vh}
+header{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:14px;margin:0 4px 0 0;font-weight:600}
+label.ctl{display:flex;align-items:center;gap:6px;color:var(--muted)}
+input[type=number]{width:70px}
+input[type=range]{width:110px}
+input,select,button{background:#0d1014;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font:inherit}
+input[type=checkbox],input[type=radio]{padding:0}
+button{cursor:pointer}
+button:hover{border-color:var(--accent)}
+.file{position:relative;overflow:hidden;display:inline-block}
+.file input{position:absolute;inset:0;opacity:0;cursor:pointer}
+main{display:grid;grid-template-columns:1fr 360px;min-height:0}
+#stage{position:relative;min-width:0;min-height:0;background:#000;overflow:hidden}
+#view{position:absolute;inset:0;width:100%;height:100%;cursor:grab}
+#view.drag{cursor:grabbing}
+#drop{position:absolute;inset:0;display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;color:var(--muted);text-align:center;pointer-events:none;padding:20px}
+#drop.over{background:rgba(74,163,255,.12);outline:2px dashed var(--accent);outline-offset:-10px}
+#badge{position:absolute;left:10px;top:10px;background:rgba(0,0,0,.65);padding:4px 8px;border-radius:6px;font-variant-numeric:tabular-nums;pointer-events:none}
+aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;padding:4px 12px 12px}
+aside h2{font-size:11px;color:var(--muted);letter-spacing:.06em;margin:14px 0 6px;font-weight:600}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:12px}
+td,th{padding:2px 4px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--muted);font-weight:500}
+td:first-child,th:first-child{text-align:left}
+#kpTable tbody tr{cursor:pointer}
+#kpTable tbody tr.off{opacity:.35}
+.low{color:var(--bad)}
+footer{background:var(--panel);border-top:1px solid var(--line);padding:6px 12px 8px}
+.transport{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px}
+#frameInfo{font-variant-numeric:tabular-nums;min-width:240px}
+#timeline{width:100%;display:block;cursor:pointer;border-radius:4px;background:#0d1014}
+.m{display:grid;grid-template-columns:auto auto 1fr auto auto;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--line)}
+.m .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.m .sc{color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sw{width:14px;height:14px;display:inline-block}
+.hint{color:var(--muted);font-size:12px}
+.warn{color:var(--warn);font-size:12px}
+kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 4px;font-size:11px;font-family:inherit}
+#seg{color:var(--warn);font-weight:600}
+.keys td{text-align:left;border:0;padding:1px 4px;white-space:normal}
+.counts{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.counts div{background:#0d1014;border:1px solid var(--line);border-radius:6px;padding:6px;text-align:center}
+.counts b{display:block;font-size:18px}
+.row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+</style>
+</head>
+<body>
+<header>
+  <h1>DLC 逐幀檢視器</h1>
+  <span class="file"><button>開啟影片</button><input id="fVideo" type="file" accept="video/*,.mp4,.webm,.mov,.avi,.mkv"></span>
+  <span class="file"><button>加入 DLC CSV（可多個）</button><input id="fCsv" type="file" accept=".csv" multiple></span>
+  <label class="ctl">FPS <input id="fps" type="number" step="0.001" min="1" value="30"></label>
+  <label class="ctl">pcutoff <input id="pcut" type="range" min="0" max="1" step="0.01" value="0.6"><span id="pcutV">0.60</span></label>
+  <label class="ctl">點大小 <input id="rad" type="range" min="2" max="14" step="1" value="5"></label>
+  <label class="ctl">低信心 <select id="lowMode"><option value="hollow">空心</option><option value="hide">隱藏</option><option value="same">照常</option></select></label>
+  <label class="ctl">顏色 <select id="colorBy"><option value="auto">自動</option><option value="kp">依部位</option><option value="model">依模型</option></select></label>
+  <label class="ctl">軌跡 <input id="trail" type="number" min="0" max="200" value="0" style="width:56px">幀</label>
+  <label class="ctl"><input id="names" type="checkbox" checked>名稱</label>
+  <span class="hint" style="margin-left:auto">Cornelius Peng · NYCU Neuromodulation Lab</span>
+</header>
+
+<main>
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="badge" hidden></div>
+    <div id="drop">
+      <div style="font-size:16px;color:var(--text)">把影片和 DLC 的 CSV 拖進來</div>
+      <div>影片：原始影片（DLC 分析的那支）或 _labeled.mp4<br>CSV：<code>deeplabcut.analyze_videos(..., save_as_csv=True)</code> 的輸出，可放多個 iteration / snapshot 互相比較</div>
+      <div>滾輪縮放 · 拖曳平移 · 雙擊還原</div>
+    </div>
+  </div>
+  <aside>
+    <h2>模型（CSV）</h2>
+    <div id="models"><div class="hint">尚未載入 CSV</div></div>
+    <div id="warnBox"></div>
+
+    <h2>目前這一幀 <span class="hint">（點列可隱藏/顯示該部位）</span></h2>
+    <table id="kpTable"><thead></thead><tbody></tbody></table>
+
+    <h2>人工行為標記（ground truth）</h2>
+    <div id="seg"></div>
+    <div class="counts">
+      <div>左手<b id="cL">0</b><span class="hint" id="fL">0 幀</span></div>
+      <div>右手<b id="cR">0</b><span class="hint" id="fR">0 幀</span></div>
+      <div>雙手<b id="cB">0</b><span class="hint" id="fB">0 幀</span></div>
+    </div>
+    <div class="hint" style="margin-top:4px">次數 = 連續標記片段數。標記為 DLC 錯誤的幀：<b id="cF">0</b></div>
+    <div class="row">
+      <button id="expLabels">匯出標記 CSV</button>
+      <span class="file"><button>匯入標記 CSV</button><input id="fLabels" type="file" accept=".csv"></span>
+      <button id="clearLabels">全部清除</button>
+    </div>
+
+    <h2>快捷鍵</h2>
+    <table class="keys">
+      <tr><td><kbd>Space</kbd></td><td>播放 / 暫停</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>上/下一幀（<kbd>Shift</kbd> ±10，<kbd>Alt</kbd> ±100）</td></tr>
+      <tr><td><kbd>N</kbd> <kbd>P</kbd></td><td>跳到下/上一個低信心幀（時間軸所選模型）</td></tr>
+      <tr><td><kbd>H</kbd></td><td>隱藏/顯示所有標記點（看原始畫面）</td></tr>
+      <tr><td><kbd>L</kbd> <kbd>R</kbd> <kbd>B</kbd></td><td>左手/右手/雙手：按一下開始，再按一下結束（同一幀按兩下 = 只標這幀）</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>取消進行中的片段</td></tr>
+      <tr><td><kbd>X</kbd></td><td>刪除目前幀所在的整段標記</td></tr>
+      <tr><td><kbd>F</kbd></td><td>標記/取消「DLC 這幀標錯」</td></tr>
+      <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>跳到上/下一個行為片段或錯誤幀</td></tr>
+    </table>
+  </aside>
+</main>
+
+<footer>
+  <div class="transport">
+    <button id="bFirst" title="Home">⏮</button>
+    <button id="bPrev10">−10</button>
+    <button id="bPrev">◀ 1</button>
+    <button id="bPlay" style="min-width:64px">▶ 播放</button>
+    <button id="bNext">1 ▶</button>
+    <button id="bNext10">+10</button>
+    <button id="bLast" title="End">⏭</button>
+    <label class="ctl">速度 <select id="rate"><option>0.1</option><option>0.25</option><option selected>0.5</option><option>1</option><option>2</option></select></label>
+    <label class="ctl">跳到幀 <input id="goto" type="number" min="0" value="0"></label>
+    <span id="frameInfo">—</span>
+    <label class="ctl" style="margin-left:auto">時間軸模型 <select id="tlModel"></select></label>
+  </div>
+  <canvas id="timeline" height="40"></canvas>
+  <div class="hint" style="margin-top:4px">時間軸：最上排 = 人工標記（<span style="color:#4aa3ff">左</span> / <span style="color:#ff9f43">右</span> / <span style="color:#c77dff">雙</span> / <span style="color:#ff5d5d">DLC 錯</span>），下面每排 = 一個部位的 likelihood（綠 ≥ pcutoff，紅 &lt; pcutoff，灰 = 無資料）</div>
+</footer>
+
+<video id="vid" muted playsinline preload="auto" style="position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none"></video>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const video = $('vid'), view = $('view'), ctx = view.getContext('2d'), tl = $('timeline'), tctx = tl.getContext('2d');
+
+const MODEL_COLORS = ['#ff4d4d', '#4aa3ff', '#3ecf8e', '#ffcc4d', '#c77dff', '#ff8fab'];
+const LABEL_COLORS = { L: '#4aa3ff', R: '#ff9f43', B: '#c77dff' };
+const LABEL_NAMES = { L: '左手', R: '右手', B: '雙手' };
+
+const S = {
+  fps: 30, fpsTouched: false, frame: 0,
+  videoName: '', hasVideo: false,
+  models: [], tlModel: 0,
+  pcut: 0.6, radius: 5, showNames: true, lowMode: 'hollow', colorBy: 'auto', trail: 0,
+  hideAll: false, hiddenKps: new Set(),
+  view: { k: 1, ox: 0, oy: 0, fitted: true },
+  labels: new Map(), flags: new Set(), seg: null,
+};
+
+// ---------- helpers ----------
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const dpr = () => window.devicePixelRatio || 1;
+function totalFrames() {
+  let n = 0;
+  if (S.hasVideo && isFinite(video.duration)) n = Math.round(video.duration * S.fps);
+  for (const m of S.models) n = Math.max(n, m.n);
+  return n;
+}
+function kpColor(i, n) { return `hsl(${Math.round(i / Math.max(1, n) * 300)},90%,58%)`; }
+function vidSize() { return [video.videoWidth || 640, video.videoHeight || 480]; }
+
+// ---------- DLC CSV parsing ----------
+function parseDLC(text, fname) {
+  const lines = text.split(/\r?\n/);
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  const hdr = {};
+  let i = 0;
+  for (; i < Math.min(lines.length, 8); i++) {
+    const r = lines[i].split(',');
+    const key = r[0].trim().toLowerCase();
+    if (['scorer', 'individuals', 'bodyparts', 'coords'].includes(key)) hdr[key] = r; else break;
+  }
+  if (!hdr.bodyparts || !hdr.coords) throw new Error(`${fname}：找不到 bodyparts / coords 表頭，這不像 DLC analyze_videos 輸出的 CSV`);
+  const kps = [], byName = {};
+  for (let c = 1; c < hdr.coords.length; c++) {
+    const bp = hdr.bodyparts[c].trim();
+    const ind = hdr.individuals ? hdr.individuals[c].trim() : '';
+    const name = ind ? `${ind}:${bp}` : bp;
+    let k = byName[name];
+    if (!k) { k = byName[name] = { name, cx: -1, cy: -1, cp: -1 }; kps.push(k); }
+    const co = hdr.coords[c].trim();
+    if (co === 'x') k.cx = c; else if (co === 'y') k.cy = c; else if (co === 'likelihood') k.cp = c;
+  }
+  const rows = lines.slice(i).map(l => l.split(','));
+  const idx = rows.map((r, j) => { const v = parseInt(r[0], 10); return Number.isFinite(v) ? v : j; });
+  const n = idx.reduce((a, b) => Math.max(a, b + 1), 0);
+  for (const k of kps) {
+    k.x = new Float32Array(n).fill(NaN); k.y = new Float32Array(n).fill(NaN); k.p = new Float32Array(n).fill(NaN);
+  }
+  rows.forEach((r, j) => {
+    const f = idx[j];
+    for (const k of kps) {
+      k.x[f] = parseFloat(r[k.cx]); k.y[f] = parseFloat(r[k.cy]);
+      k.p[f] = k.cp >= 0 ? parseFloat(r[k.cp]) : (isNaN(k.x[f]) ? NaN : 1);
+    }
+  });
+  const scorer = hdr.scorer ? (hdr.scorer[1] || '').trim() : '';
+  return { file: fname, scorer, kps, n, visible: true };
+}
+
+// ---------- loading ----------
+function loadVideo(file) {
+  if (video.src) URL.revokeObjectURL(video.src);
+  S.videoName = file.name;
+  S.hasVideo = false;
+  video.src = URL.createObjectURL(file);
+  loadSaved();
+}
+video.addEventListener('loadedmetadata', () => {
+  S.hasVideo = true; video.playbackRate = parseFloat($('rate').value);
+  $('drop').hidden = true;
+  autoFps(); fit(); gotoFrame(0); rebuildTimeline(); checkWarn();
+});
+video.addEventListener('error', () => {
+  const avi = /\.avi$/i.test(S.videoName);
+  alert(`瀏覽器無法播放「${S.videoName}」。` + (avi ? '\n\n.avi 多半瀏覽器不支援，' : '\n\n') +
+    '請先轉成 H.264 mp4（不影響幀數）：\nffmpeg -i 輸入.avi -c:v libx264 -pix_fmt yuv420p -crf 18 輸出.mp4');
+});
+video.addEventListener('seeked', render);
+
+async function loadCsvs(files) {
+  for (const f of files) {
+    if (/\.h5$/i.test(f.name)) { alert('瀏覽器讀不了 .h5，請用 CSV：\nanalyze_videos(..., save_as_csv=True)\n或 pd.read_hdf("x.h5").to_csv("x.csv")'); continue; }
+    try {
+      const m = parseDLC(await f.text(), f.name);
+      S.models.push(m);
+    } catch (e) { alert(e.message); }
+  }
+  $('drop').hidden = S.hasVideo || S.models.length > 0;
+  autoFps(); renderModels(); rebuildTimeline(); updateUI(); render(); checkWarn();
+}
+
+function autoFps() {
+  if (S.fpsTouched || !S.hasVideo || !S.models.length || !isFinite(video.duration) || !video.duration) return;
+  const n = Math.max(...S.models.map(m => m.n));
+  const est = n / video.duration;
+  if (est > 1 && est < 1000) { S.fps = Math.round(est * 1000) / 1000; $('fps').value = S.fps; }
+}
+function checkWarn() {
+  const box = $('warnBox'); box.innerHTML = '';
+  if (!S.hasVideo || !S.models.length) return;
+  const vn = Math.round(video.duration * S.fps);
+  const msgs = S.models.filter(m => Math.abs(m.n - vn) > 1).map(m => `${m.file}：CSV ${m.n} 幀，影片約 ${vn} 幀（@${S.fps} fps）— 確認是不是同一支影片、FPS 對不對`);
+  box.innerHTML = msgs.map(t => `<div class="warn">⚠ ${t}</div>`).join('');
+}
+
+// ---------- models panel ----------
+const SHAPES = ['●', '■', '▲', '◆', '✕', '★'];
+function renderModels() {
+  const box = $('models');
+  if (!S.models.length) { box.innerHTML = '<div class="hint">尚未載入 CSV</div>'; }
+  else {
+    box.innerHTML = '';
+    S.models.forEach((m, i) => {
+      const d = document.createElement('div'); d.className = 'm';
+      d.innerHTML = `<input type="checkbox" ${m.visible ? 'checked' : ''}>
+        <span class="sw" style="color:${MODEL_COLORS[i % 6]}">${SHAPES[i % 6]}</span>
+        <div style="min-width:0"><div class="nm" title="${m.file}">${m.file}</div><div class="sc" title="${m.scorer}">${m.scorer || ''} · ${m.n} 幀 · ${m.kps.length} 點</div></div>
+        <span></span><button title="移除">✕</button>`;
+      d.querySelector('input').onchange = e => { m.visible = e.target.checked; updateUI(); render(); };
+      d.querySelector('button').onclick = () => { S.models.splice(i, 1); S.tlModel = 0; renderModels(); rebuildTimeline(); updateUI(); render(); checkWarn(); };
+      box.appendChild(d);
+    });
+  }
+  const sel = $('tlModel');
+  sel.innerHTML = S.models.map((m, i) => `<option value="${i}">${SHAPES[i % 6]} ${m.file}</option>`).join('');
+  sel.value = String(S.tlModel);
+}
+
+// ---------- view / zoom ----------
+function resizeCanvas() {
+  const r = view.getBoundingClientRect(), d = dpr();
+  const w = Math.round(r.width * d), h = Math.round(r.height * d);
+  if (view.width !== w || view.height !== h) { view.width = w; view.height = h; }
+}
+function fit() {
+  resizeCanvas();
+  const r = view.getBoundingClientRect(), [vw, vh] = vidSize();
+  const k = Math.min(r.width / vw, r.height / vh);
+  S.view = { k, ox: (r.width - vw * k) / 2, oy: (r.height - vh * k) / 2, fitted: true };
+  render();
+}
+view.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = view.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const v = S.view, k2 = clamp(v.k * Math.exp(-e.deltaY * 0.0015), 0.05, 60);
+  v.ox = mx - (mx - v.ox) * (k2 / v.k); v.oy = my - (my - v.oy) * (k2 / v.k); v.k = k2; v.fitted = false;
+  render();
+}, { passive: false });
+let drag = null;
+view.addEventListener('mousedown', e => { drag = { x: e.clientX, y: e.clientY, ox: S.view.ox, oy: S.view.oy }; view.classList.add('drag'); });
+window.addEventListener('mousemove', e => {
+  if (!drag) return;
+  S.view.ox = drag.ox + e.clientX - drag.x; S.view.oy = drag.oy + e.clientY - drag.y; S.view.fitted = false; render();
+});
+window.addEventListener('mouseup', () => { drag = null; view.classList.remove('drag'); });
+view.addEventListener('dblclick', fit);
+new ResizeObserver(() => { if (S.view.fitted) fit(); else render(); rebuildTimeline(); }).observe($('stage'));
+
+// ---------- drawing ----------
+function marker(shape, x, y, r, color, filled) {
+  ctx.beginPath();
+  switch (shape) {
+    case 0: ctx.arc(x, y, r, 0, Math.PI * 2); break;
+    case 1: ctx.rect(x - r, y - r, 2 * r, 2 * r); break;
+    case 2: ctx.moveTo(x, y - r * 1.2); ctx.lineTo(x + r * 1.1, y + r * 0.8); ctx.lineTo(x - r * 1.1, y + r * 0.8); ctx.closePath(); break;
+    case 3: ctx.moveTo(x, y - r * 1.3); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r * 1.3); ctx.lineTo(x - r, y); ctx.closePath(); break;
+    case 4: ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r); ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r);
+      ctx.strokeStyle = color; ctx.lineWidth = filled ? 3 : 1.5; ctx.stroke(); return;
+    default: for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * 0.5 : r * 1.3; ctx.lineTo(x + rr * Math.cos(a), y + rr * Math.sin(a)); } ctx.closePath();
+  }
+  if (filled) { ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,.8)'; ctx.lineWidth = 1; ctx.stroke(); }
+  else { ctx.setLineDash([3, 2]); ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.stroke(); ctx.setLineDash([]); }
+}
+function colorFor(mi, ki, nk) {
+  const by = S.colorBy === 'auto' ? (S.models.filter(m => m.visible).length > 1 ? 'model' : 'kp') : S.colorBy;
+  return by === 'model' ? MODEL_COLORS[mi % 6] : kpColor(ki, nk);
+}
+function render() {
+  resizeCanvas();
+  const d = dpr(), v = S.view;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, view.width, view.height);
+  if (S.hasVideo && video.readyState >= 2) {
+    ctx.setTransform(d * v.k, 0, 0, d * v.k, d * v.ox, d * v.oy);
+    ctx.imageSmoothingEnabled = v.k < 3;
+    ctx.drawImage(video, 0, 0);
+  }
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  const f = S.frame, r = S.radius;
+  if (!S.hideAll) {
+    ctx.font = '12px -apple-system,sans-serif';
+    S.models.forEach((m, mi) => {
+      if (!m.visible || f >= m.n) return;
+      m.kps.forEach((kp, ki) => {
+        if (S.hiddenKps.has(kp.name)) return;
+        const color = colorFor(mi, ki, m.kps.length);
+        if (S.trail > 0) {
+          ctx.beginPath(); let started = false;
+          for (let t = Math.max(0, f - S.trail); t <= f; t++) {
+            const x = kp.x[t], y = kp.y[t];
+            if (isNaN(x) || kp.p[t] < S.pcut) { started = false; continue; }
+            const sx = x * v.k + v.ox, sy = y * v.k + v.oy;
+            started ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); started = true;
+          }
+          ctx.strokeStyle = color; ctx.globalAlpha = 0.6; ctx.lineWidth = 1.5; ctx.stroke(); ctx.globalAlpha = 1;
+        }
+        const x = kp.x[f], y = kp.y[f], p = kp.p[f];
+        if (isNaN(x) || isNaN(y)) return;
+        const low = p < S.pcut;
+        if (low && S.lowMode === 'hide') return;
+        const sx = x * v.k + v.ox, sy = y * v.k + v.oy;
+        marker(mi % 6, sx, sy, r, color, !low || S.lowMode === 'same');
+        if (S.showNames) {
+          const t = kp.name + (low ? ` (${p.toFixed(2)})` : '');
+          ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.strokeText(t, sx + r + 3, sy - r);
+          ctx.fillStyle = color; ctx.fillText(t, sx + r + 3, sy - r);
+        }
+      });
+    });
+  }
+  const lab = S.labels.get(f), b = $('badge');
+  const parts = [];
+  if (lab) parts.push(`<span style="color:${LABEL_COLORS[lab]}">■ ${LABEL_NAMES[lab]}</span>`);
+  if (S.flags.has(f)) parts.push('<span style="color:#ff5d5d">✖ DLC 錯</span>');
+  if (S.hideAll) parts.push('<span class="hint">標記已隱藏（H）</span>');
+  b.innerHTML = parts.join(' · '); b.hidden = !parts.length;
+}
+
+// ---------- timeline ----------
+let tlCache = null, tlRowH = 6;
+const TL_TOP = 10;
+function rebuildTimeline() {
+  const d = dpr(), W = Math.max(1, Math.round(tl.clientWidth * d));
+  const m = S.models[S.tlModel], nk = m ? m.kps.length : 0;
+  tlRowH = nk ? clamp(Math.floor(90 / nk), 3, 10) : 0;
+  const cssH = TL_TOP + 2 + nk * tlRowH;
+  tl.style.height = cssH + 'px';
+  tl.width = W; tl.height = Math.round(cssH * d);
+  tlCache = null;
+  const total = totalFrames();
+  if (m && total) {
+    const H = Math.max(1, Math.round(nk * tlRowH * d));
+    const img = new ImageData(W, H);
+    for (let ki = 0; ki < nk; ki++) {
+      const p = m.kps[ki].p;
+      const y0 = Math.round(ki * tlRowH * d), y1 = Math.round((ki + 1) * tlRowH * d) - (tlRowH > 4 ? 1 : 0);
+      for (let px = 0; px < W; px++) {
+        const f0 = Math.floor(px * total / W), f1 = Math.max(f0 + 1, Math.floor((px + 1) * total / W));
+        let mn = Infinity;
+        for (let f = f0; f < f1 && f < m.n; f++) if (!isNaN(p[f]) && p[f] < mn) mn = p[f];
+        let c;
+        if (mn === Infinity) c = [60, 60, 60];
+        else if (mn >= S.pcut) { const t = (mn - S.pcut) / Math.max(1e-6, 1 - S.pcut); c = [30, Math.round(110 + 100 * t), 80]; }
+        else { const t = mn / Math.max(1e-6, S.pcut); c = [Math.round(255 - 70 * t), Math.round(40 + 60 * t), 50]; }
+        for (let y = y0; y < y1; y++) { const o = (y * W + px) * 4; img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255; }
+      }
+    }
+    tlCache = img;
+  }
+  drawTimeline();
+}
+function drawTimeline() {
+  const d = dpr(), W = tl.width, total = totalFrames();
+  tctx.setTransform(1, 0, 0, 1, 0, 0);
+  tctx.clearRect(0, 0, W, tl.height);
+  if (tlCache) tctx.putImageData(tlCache, 0, Math.round((TL_TOP + 2) * d));
+  if (!total) return;
+  const bw = Math.max(1, W / total), th = Math.round(TL_TOP * d);
+  tctx.fillStyle = '#20262e'; tctx.fillRect(0, 0, W, th);
+  for (const [f, c] of S.labels) { tctx.fillStyle = LABEL_COLORS[c]; tctx.fillRect(Math.floor(f / total * W), 0, Math.ceil(bw), th); }
+  tctx.fillStyle = '#ff5d5d';
+  for (const f of S.flags) tctx.fillRect(Math.floor(f / total * W), 0, Math.max(2, Math.ceil(bw)), th);
+  if (S.seg) {
+    const a = Math.min(S.seg.start, S.frame), b = Math.max(S.seg.start, S.frame);
+    tctx.fillStyle = LABEL_COLORS[S.seg.code]; tctx.globalAlpha = 0.5;
+    tctx.fillRect(Math.floor(a / total * W), 0, Math.ceil((b - a + 1) * bw), th); tctx.globalAlpha = 1;
+  }
+  const x = Math.floor((S.frame + 0.5) / total * W);
+  tctx.fillStyle = '#fff'; tctx.fillRect(x - Math.round(d), 0, Math.max(2, Math.round(2 * d)), tl.height);
+}
+let tlDrag = false;
+function tlSeek(e) { const r = tl.getBoundingClientRect(); gotoFrame(Math.floor((e.clientX - r.left) / r.width * totalFrames())); }
+tl.addEventListener('mousedown', e => { tlDrag = true; tlSeek(e); });
+window.addEventListener('mousemove', e => { if (tlDrag) tlSeek(e); });
+window.addEventListener('mouseup', () => { tlDrag = false; });
+
+// ---------- frame navigation ----------
+function gotoFrame(f) {
+  const total = totalFrames();
+  S.frame = clamp(Math.round(f), 0, Math.max(0, total - 1));
+  if (S.hasVideo) {
+    if (!video.paused) video.pause();
+    video.currentTime = Math.min((S.frame + 0.5) / S.fps, Math.max(0, video.duration - 0.001));
+  }
+  updateUI(); render();
+}
+function step(n) { gotoFrame(S.frame + n); }
+function togglePlay() {
+  if (!S.hasVideo) return;
+  if (video.paused) video.play(); else video.pause();
+}
+function onVideoFrame(now, meta) {
+  S.frame = Math.round(meta.mediaTime * S.fps);
+  updateUI(); render();
+  if (!video.paused) video.requestVideoFrameCallback(onVideoFrame);
+}
+function rafLoop() {
+  if (video.paused) return;
+  S.frame = Math.floor(video.currentTime * S.fps + 1e-4); updateUI(); render(); requestAnimationFrame(rafLoop);
+}
+video.addEventListener('play', () => {
+  $('bPlay').textContent = '⏸ 暫停';
+  if ('requestVideoFrameCallback' in video) video.requestVideoFrameCallback(onVideoFrame); else requestAnimationFrame(rafLoop);
+});
+video.addEventListener('pause', () => { $('bPlay').textContent = '▶ 播放'; updateUI(); render(); });
+video.addEventListener('ended', () => { $('bPlay').textContent = '▶ 播放'; });
+
+function anyLow(m, f) {
+  for (const k of m.kps) { if (S.hiddenKps.has(k.name)) continue; const p = k.p[f]; if (!isNaN(p) && p < S.pcut) return true; }
+  return false;
+}
+function jumpLow(dir) {
+  const m = S.models[S.tlModel]; if (!m) return;
+  let f = S.frame + dir;
+  // skip the current low run first so N moves to the *next* problem region
+  while (f >= 0 && f < m.n && anyLow(m, f) && anyLow(m, f - dir)) f += dir;
+  for (; f >= 0 && f < m.n; f += dir) if (anyLow(m, f)) return gotoFrame(f);
+}
+function jumpMark(dir) {
+  const marks = new Set([...S.flags]);
+  for (const [f, c] of S.labels) if (S.labels.get(f - 1) !== c) marks.add(f); // segment starts
+  const sorted = [...marks].sort((a, b) => a - b);
+  const t = dir > 0 ? sorted.find(f => f > S.frame) : sorted.reverse().find(f => f < S.frame);
+  if (t !== undefined) gotoFrame(t);
+}
+
+// ---------- side panel ----------
+function updateUI() {
+  const total = totalFrames(), f = S.frame;
+  $('frameInfo').textContent = total ? `幀 ${f} / ${total - 1}  ·  ${(f / S.fps).toFixed(3)} s` : '—';
+  if (document.activeElement !== $('goto')) $('goto').value = f;
+  const vis = S.models.map((m, i) => ({ m, i })).filter(o => o.m.visible);
+  const thead = $('kpTable').tHead, tbody = $('kpTable').tBodies[0];
+  if (!vis.length) { thead.innerHTML = ''; tbody.innerHTML = ''; }
+  else {
+    const two = vis.length >= 2;
+    thead.innerHTML = '<tr><th>部位</th>' + (two
+      ? vis.map(o => `<th style="color:${MODEL_COLORS[o.i % 6]}">${SHAPES[o.i % 6]} p</th>`).join('') + `<th title="前兩個模型的距離">Δ px</th>`
+      : '<th>x</th><th>y</th><th>p</th>') + '</tr>';
+    const names = [...new Set(vis.flatMap(o => o.m.kps.map(k => k.name)))];
+    tbody.innerHTML = names.map(name => {
+      const ks = vis.map(o => o.m.kps.find(k => k.name === name));
+      const pc = k => { if (!k || f >= k.p.length || isNaN(k.p[f])) return '<td>–</td>'; const p = k.p[f]; return `<td class="${p < S.pcut ? 'low' : ''}">${p.toFixed(3)}</td>`; };
+      let cells;
+      if (two) {
+        const [a, b] = ks;
+        const dist = a && b && f < a.x.length && f < b.x.length && !isNaN(a.x[f]) && !isNaN(b.x[f]) ? Math.hypot(a.x[f] - b.x[f], a.y[f] - b.y[f]).toFixed(1) : '–';
+        cells = ks.map(pc).join('') + `<td>${dist}</td>`;
+      } else {
+        const k = ks[0], ok = k && f < k.x.length;
+        cells = `<td>${ok && !isNaN(k.x[f]) ? k.x[f].toFixed(1) : '–'}</td><td>${ok && !isNaN(k.y[f]) ? k.y[f].toFixed(1) : '–'}</td>` + pc(k);
+      }
+      return `<tr data-n="${name}" class="${S.hiddenKps.has(name) ? 'off' : ''}"><td>${name}</td>${cells}</tr>`;
+    }).join('');
+  }
+  $('seg').textContent = S.seg ? `● 正在標記「${LABEL_NAMES[S.seg.code]}」：從幀 ${S.seg.start} 開始，再按一次 ${S.seg.code} 結束（Esc 取消）` : '';
+  updateCounts();
+  drawTimeline();
+}
+$('kpTable').tBodies[0].addEventListener('click', e => {
+  const tr = e.target.closest('tr'); if (!tr) return;
+  const n = tr.dataset.n; S.hiddenKps.has(n) ? S.hiddenKps.delete(n) : S.hiddenKps.add(n);
+  updateUI(); render();
+});
+
+// ---------- behavior labels ----------
+function segments() {
+  const fs = [...S.labels.keys()].sort((a, b) => a - b), out = [];
+  for (const f of fs) {
+    const c = S.labels.get(f), last = out[out.length - 1];
+    if (last && last.code === c && last.end === f - 1) last.end = f; else out.push({ code: c, start: f, end: f });
+  }
+  return out;
+}
+function updateCounts() {
+  const segs = segments();
+  for (const c of ['L', 'R', 'B']) {
+    $('c' + c).textContent = segs.filter(s => s.code === c).length;
+    $('f' + c).textContent = [...S.labels.values()].filter(v => v === c).length + ' 幀';
+  }
+  $('cF').textContent = S.flags.size;
+}
+function segKey(code) {
+  if (S.seg && S.seg.code === code) {
+    const a = Math.min(S.seg.start, S.frame), b = Math.max(S.seg.start, S.frame);
+    for (let f = a; f <= b; f++) S.labels.set(f, code);
+    S.seg = null; save();
+  } else S.seg = { code, start: S.frame };
+  updateUI(); render();
+}
+function clearRun() {
+  const c = S.labels.get(S.frame); if (!c) return;
+  let a = S.frame, b = S.frame;
+  while (S.labels.get(a - 1) === c) a--;
+  while (S.labels.get(b + 1) === c) b++;
+  for (let f = a; f <= b; f++) S.labels.delete(f);
+  save(); updateUI(); render();
+}
+function toggleFlag() { S.flags.has(S.frame) ? S.flags.delete(S.frame) : S.flags.add(S.frame); save(); updateUI(); render(); }
+
+const storeKey = () => 'dlcviewer:' + S.videoName;
+function save() {
+  if (!S.videoName) return;
+  try { localStorage.setItem(storeKey(), JSON.stringify({ labels: [...S.labels], flags: [...S.flags] })); } catch (e) { /* storage unavailable */ }
+}
+function loadSaved() {
+  S.labels = new Map(); S.flags = new Set(); S.seg = null;
+  try {
+    const d = JSON.parse(localStorage.getItem(storeKey()) || 'null');
+    if (d) { S.labels = new Map(d.labels); S.flags = new Set(d.flags); }
+  } catch (e) { /* storage unavailable */ }
+}
+function exportLabels() {
+  const total = totalFrames();
+  if (!total) return alert('沒有影片或 CSV');
+  const rows = ['frame,time_s,touch,dlc_error'];
+  for (let f = 0; f < total; f++) rows.push(`${f},${(f / S.fps).toFixed(4)},${S.labels.get(f) || ''},${S.flags.has(f) ? 1 : 0}`);
+  const segs = segments().map(s => `${s.code},${s.start},${s.end},${s.end - s.start + 1}`);
+  download(rows.join('\n'), (S.videoName.replace(/\.[^.]+$/, '') || 'labels') + '_touch_labels.csv');
+  if (segs.length) download('touch,start_frame,end_frame,n_frames\n' + segs.join('\n'), (S.videoName.replace(/\.[^.]+$/, '') || 'labels') + '_touch_events.csv');
+}
+function download(text, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' })); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+async function importLabels(file) {
+  const lines = (await file.text()).split(/\r?\n/).filter(Boolean);
+  const h = lines[0].split(','), fi = h.indexOf('frame'), ti = h.indexOf('touch'), ei = h.indexOf('dlc_error');
+  if (fi < 0 || ti < 0) return alert('需要 frame 與 touch 欄位（本工具匯出的 _touch_labels.csv）');
+  S.labels = new Map(); S.flags = new Set();
+  for (const l of lines.slice(1)) {
+    const r = l.split(','), f = parseInt(r[fi], 10);
+    if (['L', 'R', 'B'].includes(r[ti])) S.labels.set(f, r[ti]);
+    if (ei >= 0 && r[ei] === '1') S.flags.add(f);
+  }
+  save(); updateUI(); render();
+}
+
+// ---------- controls ----------
+$('fVideo').onchange = e => { if (e.target.files[0]) loadVideo(e.target.files[0]); e.target.value = ''; };
+$('fCsv').onchange = e => { loadCsvs([...e.target.files]); e.target.value = ''; };
+$('fLabels').onchange = e => { if (e.target.files[0]) importLabels(e.target.files[0]); e.target.value = ''; };
+$('fps').onchange = e => { const v = parseFloat(e.target.value); if (v > 0) { S.fps = v; S.fpsTouched = true; rebuildTimeline(); gotoFrame(S.frame); checkWarn(); } };
+$('pcut').oninput = e => { S.pcut = parseFloat(e.target.value); $('pcutV').textContent = S.pcut.toFixed(2); rebuildTimeline(); updateUI(); render(); };
+$('rad').oninput = e => { S.radius = +e.target.value; render(); };
+$('lowMode').onchange = e => { S.lowMode = e.target.value; render(); e.target.blur(); };
+$('colorBy').onchange = e => { S.colorBy = e.target.value; render(); e.target.blur(); };
+$('trail').onchange = e => { S.trail = clamp(parseInt(e.target.value, 10) || 0, 0, 200); render(); };
+$('names').onchange = e => { S.showNames = e.target.checked; render(); e.target.blur(); };
+$('rate').onchange = e => { video.playbackRate = parseFloat(e.target.value); e.target.blur(); };
+$('goto').onchange = e => { gotoFrame(parseInt(e.target.value, 10) || 0); e.target.blur(); };
+$('tlModel').onchange = e => { S.tlModel = +e.target.value; rebuildTimeline(); e.target.blur(); };
+$('bFirst').onclick = () => gotoFrame(0);
+$('bLast').onclick = () => gotoFrame(totalFrames() - 1);
+$('bPrev').onclick = () => step(-1); $('bNext').onclick = () => step(1);
+$('bPrev10').onclick = () => step(-10); $('bNext10').onclick = () => step(10);
+$('bPlay').onclick = togglePlay;
+$('expLabels').onclick = exportLabels;
+$('clearLabels').onclick = () => { if (confirm('清除這支影片的所有行為標記與錯誤標記？')) { S.labels.clear(); S.flags.clear(); S.seg = null; save(); updateUI(); render(); } };
+video.playbackRate = 0.5;
+
+window.addEventListener('keydown', e => {
+  const tag = e.target.tagName;
+  if ((tag === 'INPUT' && e.target.type !== 'checkbox' && e.target.type !== 'range') || tag === 'SELECT') return;
+  if (e.metaKey || e.ctrlKey) return;
+  const k = e.key, big = e.altKey ? 100 : e.shiftKey ? 10 : 1;
+  let handled = true;
+  switch (k) {
+    case ' ': togglePlay(); break;
+    case 'ArrowRight': step(big); break;
+    case 'ArrowLeft': step(-big); break;
+    case 'Home': gotoFrame(0); break;
+    case 'End': gotoFrame(totalFrames() - 1); break;
+    case 'Escape': S.seg = null; updateUI(); break;
+    default:
+      switch (e.code) {
+        case 'KeyN': jumpLow(1); break;
+        case 'KeyP': jumpLow(-1); break;
+        case 'KeyH': S.hideAll = !S.hideAll; render(); break;
+        case 'KeyL': segKey('L'); break;
+        case 'KeyR': segKey('R'); break;
+        case 'KeyB': segKey('B'); break;
+        case 'KeyX': clearRun(); break;
+        case 'KeyF': toggleFlag(); break;
+        case 'BracketRight': jumpMark(1); break;
+        case 'BracketLeft': jumpMark(-1); break;
+        default: handled = false;
+      }
+  }
+  if (handled) e.preventDefault();
+});
+
+// drag & drop anywhere
+const drop = $('drop');
+window.addEventListener('dragover', e => { e.preventDefault(); drop.hidden = false; drop.classList.add('over'); });
+window.addEventListener('dragleave', e => { if (!e.relatedTarget) { drop.classList.remove('over'); drop.hidden = S.hasVideo || S.models.length > 0; } });
+window.addEventListener('drop', e => {
+  e.preventDefault(); drop.classList.remove('over');
+  const files = [...e.dataTransfer.files];
+  const vid = files.find(f => f.type.startsWith('video/') || /\.(mp4|webm|mov|avi|mkv|m4v)$/i.test(f.name));
+  if (vid) loadVideo(vid);
+  const csvs = files.filter(f => /\.(csv|h5)$/i.test(f.name));
+  if (csvs.length) loadCsvs(csvs);
+  drop.hidden = S.hasVideo || S.models.length > 0 || !!vid;
+});
+
+fit(); updateUI();
+// test hooks
+window.__dlc = { S, loadVideo, loadCsvs, gotoFrame };
+</script>
+</body>
+</html>
